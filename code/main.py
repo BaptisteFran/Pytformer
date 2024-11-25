@@ -1,7 +1,9 @@
+from random import randint
 from sprites import *
 from settings import *
 from groups import AllSprites
 from support import *
+from timer import Timer
 
 class Game:
     def __init__(self):
@@ -14,10 +16,29 @@ class Game:
         # groups 
         self.all_sprites = AllSprites()
         self.collision_sprites = pygame.sprite.Group()
+        self.bullet_sprites = pygame.sprite.Group()
+        self.enemy_sprites = pygame.sprite.Group()
 
         # setup
         self.load_assets()
         self.setup()
+
+        # timers
+        self.bee_timer = Timer(500, func = self.create_bee, autostart=True, repeat=True)
+
+
+    def create_bee(self):
+        Bee(frames=self.bee_frames,
+            pos=((self.level_width + WINDOW_WIDTH), randint(0,self.level_height)),
+            groups=(self.all_sprites, self.enemy_sprites),
+            speed=randint(300, 500))
+
+    def create_bullet(self, pos, direction):
+        x = pos[0] + direction * 34 if direction == 1 else pos[0] + direction * 34 - self.bullet_surf.get_width()
+        Bullet(self.bullet_surf, (x, pos[1]), direction, (self.all_sprites, self.bullet_sprites))
+        Fire(self.fire_surf, pos, self.all_sprites, self.player)
+        self.audio['shoot'].play()
+        self.audio['shoot'].set_volume(.3)
 
     def load_assets(self):
         # graphics
@@ -27,8 +48,13 @@ class Game:
         self.bee_frames = import_folder('images', 'enemies', 'bee')
         self.worm_frames = import_folder('images', 'enemies', 'worm')
 
+        # sounds
+        self.audio = audio_importer('audio')
+
     def setup(self):
         tmx_map = load_pygame(join("data", "maps", "world.tmx"))
+        self.level_width = tmx_map.width * TILE_SIZE
+        self.level_height = tmx_map.height * TILE_SIZE
 
         for x,y,image in tmx_map.get_layer_by_name("Main").tiles():
             Sprite((x * TILE_SIZE, y * TILE_SIZE), image, (self.all_sprites, self.collision_sprites))
@@ -38,8 +64,28 @@ class Game:
 
         for obj in tmx_map.get_layer_by_name("Entities"):
             if obj.name == 'Player':
-                self.player = Player((obj.x, obj.y), self.all_sprites, self.collision_sprites, self.player_frames)
+                self.player = Player((obj.x, obj.y), self.all_sprites, self.collision_sprites, self.player_frames, self.create_bullet)
 
+            if obj.name == 'Worm':
+                Worm(self.worm_frames, pygame.FRect(obj.x, obj.y, obj.width, obj.height), (self.all_sprites, self.enemy_sprites ))
+
+        self.audio['music'].play(loops= -1)
+        self.audio['music'].set_volume(.3)
+
+
+    def collision(self):
+        # bullets -> enemies
+        for bullet in self.bullet_sprites:
+            sprite_collision = pygame.sprite.spritecollide(bullet, self.enemy_sprites, False, pygame.sprite.collide_mask)
+            if sprite_collision:
+                self.audio['impact'].play()
+                bullet.kill()
+                for sprite in sprite_collision:
+                    sprite.destroy()
+
+        # enemies -> player
+        if pygame.sprite.spritecollide(self.player, self.enemy_sprites, False, pygame.sprite.collide_mask):
+            self.running = False
 
     def run(self):
         while self.running:
@@ -50,7 +96,9 @@ class Game:
                     self.running = False 
             
             # update
+            self.bee_timer.update()
             self.all_sprites.update(dt)
+            self.collision()
 
             # draw 
             self.display_surface.fill(BG_COLOR)
